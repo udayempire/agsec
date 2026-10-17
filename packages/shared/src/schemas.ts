@@ -154,11 +154,16 @@ export const RuleMatchSchema = z.discriminatedUnion("type", [
 
 // Policy rule and policy set 
 
+export const PolicyRuleToolSchema = z.union([
+  ToolNameSchema,
+  z.literal("*"),
+]);
+
 export const PolicyRuleSchema = z
   .object({
     id: z.string().min(1),
     enabled: z.boolean(),
-    tool: ToolNameSchema,
+    tool: PolicyRuleToolSchema,
     effect: DecisionSchema,
     severity: SeveritySchema,
     match: RuleMatchSchema,
@@ -187,6 +192,7 @@ export const PolicyVerdictSchema = z
 // Inferred TypeScript types
 
 export type ToolName = z.infer<typeof ToolNameSchema>;
+export type PolicyRuleTool = z.infer<typeof PolicyRuleToolSchema>;
 export type Decision = z.infer<typeof DecisionSchema>;
 export type Severity = z.infer<typeof SeveritySchema>;
 

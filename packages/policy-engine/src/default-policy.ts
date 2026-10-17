@@ -28,6 +28,18 @@ export const defaultPolicy: PolicySet = {
             },
         },
         {
+            id: "FILE-ALLOW-001",
+            enabled: true,
+            tool: "read_file",
+            effect: "ALLOW",
+            severity: "info",
+            description: "Allow reads from public sandbox files.",
+            match: {
+              type: "path_class",
+              pathClass: "public",
+            },
+          },          
+        {
             id: "NET-001",
             enabled: true,
             tool: "http_send",
