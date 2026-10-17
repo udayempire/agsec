@@ -82,6 +82,9 @@
       "dependencies": {
         "@repo/shared": "*",
       },
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
     },
     "packages/shared": {
       "name": "@repo/shared",
