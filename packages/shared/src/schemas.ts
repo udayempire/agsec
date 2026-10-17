@@ -110,9 +110,9 @@ export const PathClassMatchSchema = z
   })
   .strict();
 
-export const DestinationNotAllowedMatchSchema = z
+export const AllowedHosts = z
   .object({
-    type: z.literal("destination_not_allowed"),
+    type: z.literal("allowed_hosts"),
     destinations: z.array(z.string().min(1)).min(1),
   })
   .strict();
@@ -146,7 +146,7 @@ export const SequenceMatchSchema = z
 
 export const RuleMatchSchema = z.discriminatedUnion("type", [
   PathClassMatchSchema,
-  DestinationNotAllowedMatchSchema,
+  AllowedHosts,
   DangerousCommandMatchSchema,
   ToolDeniedMatchSchema,
   SequenceMatchSchema,
