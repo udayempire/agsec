@@ -1,123 +1,135 @@
 import { lstat, realpath } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+
+export type SandboxPathClass = "public" | "secret" | "unknown";
 
 export type ResolvedSandboxPath = {
-    inputPath: string;
-    absolutePath: string;
-    relativePath: string;
-    pathClass: "public" | "secret" | "unknown";
+  inputPath: string;
+  absolutePath: string;
+  relativePath: string;
+  pathClass: SandboxPathClass;
 };
 
-const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
-const SANDBOX_ROOT = path.resolve(MODULE_DIR, "../../sandbox");
+const SANDBOX_ROOT = path.resolve(import.meta.dir, "../../sandbox");
+const REAL_SANDBOX_ROOT = await realpath(SANDBOX_ROOT);
 
-function isInside(root: string, target: string): boolean {
-    const relative = path.relative(root, target);
-  
-    return (
-      relative === "" ||
-      (relative !== ".." &&
-        !relative.startsWith(`..${path.sep}`) &&
-        !path.isAbsolute(relative))
-    );
-};
+export function getSandboxRoot(): string {
+  return REAL_SANDBOX_ROOT;
+}
 
-function classifyPath(
-    relativePath: string,
-  ): ResolvedSandboxPath["pathClass"] {
-    const normalized = relativePath.split(path.sep).join("/");
-  
-    if (normalized.startsWith("public/")) return "public";
-    if (normalized.startsWith("secrets/")) return "secret";
-  
-    return "unknown";
-};
+export async function resolveSandboxPath(
+  inputPath: string,
+): Promise<ResolvedSandboxPath> {
+  rejectUnsafeInput(inputPath);
 
+  const normalizedInput = path.normalize(inputPath);
+  const requestedPath = path.resolve(REAL_SANDBOX_ROOT, normalizedInput);
+  const parentPath = path.dirname(requestedPath);
 
-    export async function resolveSandboxPath(inputPath: string): Promise<ResolvedSandboxPath> {
-        if (
-        path.isAbsolute(inputPath) ||
-        path.win32.isAbsolute(inputPath)
-    ) {
-        throw new Error("Absolute paths are not allowed.");
+  let realParent: string;
+  try {
+    realParent = await realpath(parentPath);
+  } catch {
+    throw new Error("Target parent path does not exist");
+  }
+
+  if (!isInsideSandbox(realParent, REAL_SANDBOX_ROOT)) {
+    throw new Error("Path escapes sandbox");
+  }
+
+  const targetExists = await pathExists(requestedPath);
+  const absolutePath = targetExists
+    ? await resolveExistingTarget(requestedPath)
+    : path.join(realParent, path.basename(requestedPath));
+
+  if (!isInsideSandbox(absolutePath, REAL_SANDBOX_ROOT)) {
+    throw new Error("Resolved path escapes sandbox");
+  }
+
+  const relativePath = path.relative(REAL_SANDBOX_ROOT, absolutePath);
+
+  if (relativePath === "" || !isSafeRelativePath(relativePath)) {
+    throw new Error("Resolved path escapes sandbox");
+  }
+
+  return {
+    inputPath,
+    absolutePath,
+    relativePath,
+    pathClass: classifySandboxPath(relativePath),
+  };
+}
+
+//remove unsafe input or paths.
+function rejectUnsafeInput(inputPath: string): void {
+  if (inputPath.trim().length === 0) {
+    throw new Error("Sandbox path cannot be empty");
+  }
+
+  if (inputPath.includes("\0")) {
+    throw new Error("NUL bytes are not allowed in sandbox paths");
+  }
+
+  if (path.isAbsolute(inputPath) || path.win32.isAbsolute(inputPath)) {
+    throw new Error("Absolute sandbox paths are not allowed");
+  }
+}
+
+// Resolves the target's real path and rejects dangling symlinks or sandbox escapes.
+async function resolveExistingTarget(requestedPath: string): Promise<string> {
+  try {
+    const realTarget = await realpath(requestedPath);
+
+    if (!isInsideSandbox(realTarget, REAL_SANDBOX_ROOT)) {
+      throw new Error("Symlink escapes sandbox");
     }
 
-    const normalizedInput = path.normalize(inputPath);
-
-    const sandboxRoot = await realpath(SANDBOX_ROOT);
-
-    const requestedPath = path.resolve(
-        sandboxRoot,
-        normalizedInput,
-    );
-
-    const parentPath = path.dirname(requestedPath);
-
-    // Resolve the parent to detect symlink-based directory escapes.
-    const realParent = await realpath(parentPath);
-
-    if (!isInside(sandboxRoot, realParent)) {
-        throw new Error("Path escapes the sandbox.");
+    return realTarget;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      throw new Error("Target symlink is dangling or cannot be resolved");
     }
 
-    // Check whether the target exists, including dangling symlinks.
-    let targetExists = true;
+    throw error;
+  }
+}
 
-    try {
-        await lstat(requestedPath);
-    } catch (error) {
-        if (
-        error instanceof Error &&
-        "code" in error &&
-        error.code === "ENOENT"
-        ) {
-        targetExists = false;
-        } else {
-        throw error;
-        }
+async function pathExists(candidatePath: string): Promise<boolean> {
+  try {
+    await lstat(candidatePath);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return false;
     }
 
-    let absolutePath: string;
+    throw error;
+  }
+}
 
-    if (targetExists) {
-        // Resolve symlinks on the target itself.
-        absolutePath = await realpath(requestedPath);
+function isInsideSandbox(candidatePath: string, sandboxRoot: string): boolean {
+  const relativePath = path.relative(sandboxRoot, candidatePath);
+  return isSafeRelativePath(relativePath) || relativePath === "";
+}
 
-        if (!isInside(sandboxRoot, absolutePath)) {
-        throw new Error("Target escapes the sandbox.");
-        }
-    } else {
-        // Preserve the intended target path under its canonical parent.
-        absolutePath = path.join(realParent, path.basename(requestedPath));
-    }
+function isSafeRelativePath(relativePath: string): boolean {
+  return (
+    relativePath !== ".." &&
+    !relativePath.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relativePath)
+  );
+}
 
-    const relativePath = path.relative(
-        sandboxRoot,
-        absolutePath,
-    );
+function classifySandboxPath(relativePath: string): SandboxPathClass {
+  const normalized = relativePath.split(path.sep).join("/");
 
-    if (
-        relativePath === ".." ||
-        relativePath.startsWith(`..${path.sep}`) ||
-        path.isAbsolute(relativePath)
-    ) {
-        throw new Error("Resolved path escapes the sandbox.");
-    }
+  if (normalized === "public" || normalized.startsWith("public/")) {
+    return "public";
+  }
 
-    return {
-        inputPath,
-        absolutePath,
-        relativePath,
-        pathClass: classifyPath(relativePath),
-    };
-    };
+  if (normalized === "secrets" || normalized.startsWith("secrets/")) {
+    return "secret";
+  }
 
-
-// how it works
-
-// rejects empty paths, NUL bytes, and absolute paths.
-// resolves the actual filesystem location of apps/api/sandbox/
-// prevents directory symlinks from escaping the sandbox
-// resolves existing targets to detect symlink escapes, including dangling symlinks being rejected.
-// identifies canonical paths under public/ and secrets/; everything else is unknown.
+  return "unknown";
+}
