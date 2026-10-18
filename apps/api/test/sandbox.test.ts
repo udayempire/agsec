@@ -1,6 +1,6 @@
 
 import { describe, it, expect } from "bun:test";
-import { resolveSandboxPath } from "./sandbox";
+import { resolveSandboxPath } from "../src/executor/sandbox";
 
 describe("resolveSandboxPath", () => {
   it("resolves a public file", async () => {
