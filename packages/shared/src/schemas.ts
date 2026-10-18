@@ -124,6 +124,13 @@ export const DangerousCommandMatchSchema = z
   })
   .strict();
 
+export const SafeCommandMatchSchema = z
+  .object({
+    type: z.literal("safe_command"),
+    blockedPatterns: z.array(z.string().min(1)).min(1),
+  })
+  .strict();
+
 export const ToolDeniedMatchSchema = z
   .object({
     type: z.literal("tool_denied"),
@@ -149,6 +156,7 @@ export const RuleMatchSchema = z.discriminatedUnion("type", [
   AllowedHosts,
   DangerousCommandMatchSchema,
   ToolDeniedMatchSchema,
+  SafeCommandMatchSchema,
   SequenceMatchSchema,
 ]);
 

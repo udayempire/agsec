@@ -56,6 +56,22 @@ export const defaultPolicy: PolicySet = {
             },
         },
         {
+            id: "NET-ALLOW-001",
+            enabled: true,
+            tool: "http_send",
+            effect: "ALLOW",
+            severity: "info",
+            description: "Allow simulated HTTP requests to approved destinations.",
+            match: {
+                type: "allowed_hosts",
+                destinations: [
+                    "api.github.com",
+                    "registry.npmjs.org",
+                    "localhost",
+                ],
+            },
+        },
+        {
             id: "CMD-001",
             enabled: true,
             tool: "run_command",
@@ -83,14 +99,18 @@ export const defaultPolicy: PolicySet = {
             },
         },
         {
-            id: "TOOL-001",
+            id: "CMD-ALLOW-001",
             enabled: true,
             tool: "run_command",
-            effect: "REQUIRE_APPROVAL",
-            severity: "medium",
-            description: "Command execution requires explicit approval unless further restricted.",
+            effect: "ALLOW",
+            severity: "info",
+            description: "Allow safe commands through the simulated command executor.",
             match: {
-                type: "tool_denied",
+                type: "safe_command",
+                blockedPatterns: [
+                    "rm", "curl", "wget", "nc", "netcat", "ssh", "scp",
+                    "chmod", "chown", "sudo", "bash", "sh", "zsh", "fish",
+                ],
             },
         },
         {

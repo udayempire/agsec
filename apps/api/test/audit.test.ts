@@ -73,4 +73,87 @@ describe("audit store", () => {
     });
     expect(JSON.stringify(events)).not.toContain("content");
   });
+
+  it("simulates safe commands and allowlisted HTTP without performing either action", async () => {
+    const sessionId = `simulation-test-${crypto.randomUUID()}`;
+
+    const command = await handleToolCall({
+      sessionId,
+      seq: 1,
+      idempotencyKey: "safe-command",
+      tool: "run_command",
+      args: { argv: ["echo", "hello"] },
+    });
+    const http = await handleToolCall({
+      sessionId,
+      seq: 2,
+      idempotencyKey: "safe-http",
+      tool: "http_send",
+      args: { url: "http://localhost/health", method: "GET" },
+    });
+
+    expect(command).toMatchObject({
+      executed: true,
+      verdict: { decision: "ALLOW", matchedRules: ["CMD-ALLOW-001"] },
+    });
+    expect(command.result).toEqual({
+      simulated: true,
+      argv: ["echo", "hello"],
+      command: "echo hello",
+      exitCode: 0,
+    });
+    expect(http).toMatchObject({
+      executed: true,
+      verdict: { decision: "ALLOW", matchedRules: ["NET-ALLOW-001"] },
+    });
+    expect(http.result).toEqual({
+      simulated: true,
+      method: "GET",
+      host: "localhost",
+      status: 202,
+      payloadBytes: 0,
+    });
+  });
+
+  it("blocks dangerous commands and secret-read followed by allowlisted egress", async () => {
+    const dangerous = await handleToolCall({
+      sessionId: `dangerous-test-${crypto.randomUUID()}`,
+      seq: 1,
+      idempotencyKey: "dangerous-command",
+      tool: "run_command",
+      args: { argv: ["rm", "-rf", "/"] },
+    });
+
+    const sessionId = `exfil-test-${crypto.randomUUID()}`;
+    await handleToolCall({
+      sessionId,
+      seq: 1,
+      idempotencyKey: "secret-read",
+      tool: "read_file",
+      args: { path: "secrets/.env.fake" },
+    });
+    const exfiltration = await handleToolCall({
+      sessionId,
+      seq: 2,
+      idempotencyKey: "egress",
+      tool: "http_send",
+      args: {
+        url: "http://localhost/collect",
+        method: "POST",
+        body: "sensitive-looking payload",
+      },
+    });
+
+    expect(dangerous).toMatchObject({
+      executed: false,
+      verdict: { decision: "BLOCK", matchedRules: ["CMD-001"] },
+    });
+    expect(exfiltration).toMatchObject({
+      executed: false,
+      verdict: { decision: "BLOCK" },
+    });
+    expect(exfiltration.verdict.matchedRules).toEqual(
+      expect.arrayContaining(["SEQ-001", "NET-ALLOW-001"]),
+    );
+  });
 });

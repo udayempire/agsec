@@ -14,8 +14,17 @@ export type ResourceContext = {
     pathClass?: string;
 };
 
+export type SessionHistoryEntry = {
+    tool: ToolCallRequest["tool"];
+    pathClass?: string;
+    destination?: string;
+    timestamp: number;
+};
+
 export type EvaluationContext = {
     resource?: ResourceContext;
+    sessionHistory?: readonly SessionHistoryEntry[];
+    now?: number;
 };
 
 const DECISION_RANK: Record<Decision, number> = {
@@ -93,9 +102,10 @@ function matchesRule(
             const args = request.args as HttpSendArgs;
             const host = safeHost(args.url);
 
-            if (!host) return true;
+            if (!host) return rule.effect === "BLOCK";
 
-            return !match.destinations.includes(host);
+            const isAllowed = match.destinations.includes(host);
+            return rule.effect === "ALLOW" ? isAllowed : !isAllowed;
         }
 
         case "dangerous_command": {
@@ -109,15 +119,89 @@ function matchesRule(
             );
         }
 
+        case "safe_command": {
+            if (request.tool !== "run_command") return false;
+
+            const args = request.args as RunCommandArgs;
+            const argv = args.argv.map((part) => part.toLowerCase());
+
+            return !match.blockedPatterns.some((pattern) =>
+                argv.some((arg) => arg === pattern.toLowerCase()),
+            );
+        }
+
         case "tool_denied": {
             return true;
         }
 
         case "sequence": {
-            // Sequence rules need session history and are handled later by the
-            // sequence detector, not this pure stateless evaluator.
-            return false;
+            return matchesSequence(match, request, context);
         }
+    }
+}
+
+function matchesSequence(
+    sequence: {
+        steps: ReadonlyArray<{
+            tool?: ToolCallRequest["tool"];
+            pathClass?: string;
+            destination?: string;
+        }>;
+        window?: number;
+    },
+    request: ToolCallRequest,
+    context: EvaluationContext,
+): boolean {
+    const now = context.now ?? Date.now();
+    const current: SessionHistoryEntry = {
+        tool: request.tool,
+        pathClass: context.resource?.pathClass,
+        destination: requestDestination(request),
+        timestamp: now,
+    };
+    const earliestTimestamp =
+        sequence.window === undefined ? Number.NEGATIVE_INFINITY : now - sequence.window;
+    const history = [...(context.sessionHistory ?? []), current].filter(
+        (entry) => entry.timestamp >= earliestTimestamp && entry.timestamp <= now,
+    );
+
+    let stepIndex = 0;
+
+    for (let index = 0; index < history.length; index += 1) {
+        if (matchesSequenceStep(sequence.steps[stepIndex]!, history[index]!)) {
+            stepIndex += 1;
+
+            if (stepIndex === sequence.steps.length) {
+                return index === history.length - 1;
+            }
+        }
+    }
+
+    return false;
+}
+
+function matchesSequenceStep(
+    step: {
+        tool?: ToolCallRequest["tool"];
+        pathClass?: string;
+        destination?: string;
+    },
+    entry: SessionHistoryEntry,
+): boolean {
+    return (
+        (!step.tool || step.tool === entry.tool) &&
+        (!step.pathClass || step.pathClass === entry.pathClass) &&
+        (!step.destination || step.destination === entry.destination)
+    );
+}
+
+function requestDestination(request: ToolCallRequest): string | undefined {
+    if (request.tool !== "http_send") return undefined;
+
+    try {
+        return new URL((request.args as HttpSendArgs).url).hostname;
+    } catch {
+        return undefined;
     }
 }
 

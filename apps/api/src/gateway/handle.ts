@@ -1,5 +1,6 @@
 import { defaultPolicy, evaluatePolicy } from "@repo/policy-engine";
 import {
+  HttpSendArgsSchema,
   ReadFileArgsSchema,
   ToolCallRequestSchema,
   type PolicyVerdict,
@@ -10,6 +11,7 @@ import { auditStore } from "../audit/memory-store";
 import type { AuditEvent } from "../audit/store";
 import { authorizeAction } from "./authorize";
 import type { ToolCallRequest } from "@repo/shared";
+import { sessionState } from "./session-state";
 
 export type GatewayResult = {
   verdict: PolicyVerdict;
@@ -21,6 +23,7 @@ export async function handleToolCall(input: unknown): Promise<GatewayResult> {
   let request: ToolCallRequest | undefined;
   let resourcePath: string | undefined;
   let resourceClass: string | undefined;
+  let payloadBytes: number | undefined;
 
   const audit = async (
     verdict: PolicyVerdict,
@@ -42,6 +45,7 @@ export async function handleToolCall(input: unknown): Promise<GatewayResult> {
       executed,
       ...(resourcePath ? { resourcePath } : {}),
       ...(resourceClass ? { resourceClass } : {}),
+      ...(payloadBytes !== undefined ? { payloadBytes } : {}),
     };
 
     await auditStore.append(event);
@@ -49,6 +53,7 @@ export async function handleToolCall(input: unknown): Promise<GatewayResult> {
 
   try {
     request = ToolCallRequestSchema.parse(input);
+    const now = Date.now();
 
     if (request.tool === "read_file") {
       const args = ReadFileArgsSchema.parse(request.args);
@@ -57,12 +62,20 @@ export async function handleToolCall(input: unknown): Promise<GatewayResult> {
       resourceClass = resolved.pathClass;
     }
 
+    if (request.tool === "http_send") {
+      const args = HttpSendArgsSchema.parse(request.args);
+      payloadBytes = new TextEncoder().encode(args.body ?? "").byteLength;
+    }
+
     const verdict = evaluatePolicy(request, defaultPolicy, {
       resource: { pathClass: resourceClass },
+      sessionHistory: sessionState.getHistory(request.sessionId),
+      now,
     });
 
     if (verdict.decision !== "ALLOW") {
       await audit(verdict, false);
+      sessionState.record(request, resourceClass);
       return {
         verdict,
         executed: false,
@@ -73,6 +86,7 @@ export async function handleToolCall(input: unknown): Promise<GatewayResult> {
     const result = await runAuthorizedAction(action);
 
     await audit(verdict, true);
+    sessionState.record(request, resourceClass);
 
     return {
       verdict,
@@ -89,6 +103,7 @@ export async function handleToolCall(input: unknown): Promise<GatewayResult> {
 
     if (request) {
       await audit(verdict, false);
+      sessionState.record(request, resourceClass);
     }
 
     return {
