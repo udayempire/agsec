@@ -60,6 +60,62 @@ Bun.serve({
       return jsonResponse(await auditStore.getStats());
     }
 
+    if (req.method === "GET" && url.pathname === "/admin/stream") {
+      const encoder = new TextEncoder();
+      let unsubscribe = () => {};
+      let heartbeat: ReturnType<typeof setInterval> | undefined;
+      let closed = false;
+
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const send = (event: string, data: unknown) => {
+            if (closed) return;
+
+            try {
+              controller.enqueue(
+                encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+              );
+            } catch {
+              close();
+            }
+          };
+
+          const close = () => {
+            if (closed) return;
+            closed = true;
+            unsubscribe();
+            if (heartbeat) clearInterval(heartbeat);
+            try {
+              controller.close();
+            } catch {
+              // The client may have already closed the stream.
+            }
+          };
+
+          unsubscribe = auditStore.subscribe((event) => send("audit", event));
+          heartbeat = setInterval(() => {
+            if (!closed) controller.enqueue(encoder.encode(": heartbeat\n\n"));
+          }, 15_000);
+          send("ready", { service: "agsec-api" });
+          req.signal.addEventListener("abort", close, { once: true });
+        },
+        cancel() {
+          closed = true;
+          unsubscribe();
+          if (heartbeat) clearInterval(heartbeat);
+        },
+      });
+
+      return new Response(stream, {
+        headers: {
+          "access-control-allow-origin": "*",
+          "cache-control": "no-cache, no-transform",
+          connection: "keep-alive",
+          "content-type": "text/event-stream",
+        },
+      });
+    }
+
     if (req.method === "POST" && url.pathname === "/v1/tool-calls") {
       try {
         const body = await readJson(req);

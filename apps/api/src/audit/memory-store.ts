@@ -1,10 +1,16 @@
-import type { AuditEvent, AuditStats, AuditStore } from "./store";
+import type {
+  AuditEvent,
+  AuditEventListener,
+  AuditStats,
+  AuditStore,
+} from "./store";
 
 const DEFAULT_MAX_EVENTS = 1_000;
 
 export class MemoryAuditStore implements AuditStore {
   events: AuditEvent[] = [];
   maxEvents: number;
+  listeners: Set<AuditEventListener> = new Set();
 
   constructor(maxEvents = DEFAULT_MAX_EVENTS) {
     if (!Number.isInteger(maxEvents) || maxEvents < 1) {
@@ -16,13 +22,22 @@ export class MemoryAuditStore implements AuditStore {
 
   async append(event: AuditEvent): Promise<void> {
     // Copy mutable fields so callers cannot change an event after it is stored.
-    this.events.push({
+    const storedEvent = {
       ...event,
       matchedRules: [...event.matchedRules],
-    });
+    };
+
+    this.events.push(storedEvent);
 
     if (this.events.length > this.maxEvents) {
       this.events.splice(0, this.events.length - this.maxEvents);
+    }
+
+    for (const listener of this.listeners) {
+      listener({
+        ...storedEvent,
+        matchedRules: [...storedEvent.matchedRules],
+      });
     }
   }
 
@@ -65,6 +80,14 @@ export class MemoryAuditStore implements AuditStore {
     }
 
     return stats;
+  }
+
+  subscribe(listener: AuditEventListener): () => void {
+    this.listeners.add(listener);
+
+    return () => {
+      this.listeners.delete(listener);
+    };
   }
 }
 

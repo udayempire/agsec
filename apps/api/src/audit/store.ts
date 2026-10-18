@@ -25,7 +25,10 @@ export type AuditStore = {
   append(event: AuditEvent): Promise<void>;
   listRecent(limit?: number): Promise<AuditEvent[]>;
   getStats(): Promise<AuditStats>;
+  subscribe(listener: AuditEventListener): () => void;
 };
+
+export type AuditEventListener = (event: AuditEvent) => void;
 
 export type AuditStats = {
   totalEvents: number;
