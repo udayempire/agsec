@@ -26,6 +26,11 @@ describe("audit store", () => {
       "3",
       "2",
     ]);
+
+    const stats = await store.getStats();
+    expect(stats.totalEvents).toBe(2);
+    expect(stats.byDecision.BLOCK).toBe(2);
+    expect(stats.byTool.read_file).toBe(2);
   });
 
   it("audits both allowed and blocked gateway decisions without content", async () => {

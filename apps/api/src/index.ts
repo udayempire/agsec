@@ -1,4 +1,5 @@
 import { handleToolCall } from "./gateway/handle";
+import { auditStore } from "./audit/memory-store";
 
 const PORT = Number(Bun.env.PORT ?? 3001);
 
@@ -36,6 +37,27 @@ Bun.serve({
 
     if (req.method === "GET" && url.pathname === "/health") {
       return jsonResponse({ ok: true, service: "agsec-api" });
+    }
+
+    if (req.method === "GET" && url.pathname === "/admin/events") {
+      const requestedLimit = Number(url.searchParams.get("limit") ?? 100);
+
+      if (
+        !Number.isInteger(requestedLimit) ||
+        requestedLimit < 1 ||
+        requestedLimit > 1_000
+      ) {
+        return jsonResponse(
+          { error: "limit must be an integer between 1 and 1000" },
+          { status: 400 },
+        );
+      }
+
+      return jsonResponse({ events: await auditStore.listRecent(requestedLimit) });
+    }
+
+    if (req.method === "GET" && url.pathname === "/admin/stats") {
+      return jsonResponse(await auditStore.getStats());
     }
 
     if (req.method === "POST" && url.pathname === "/v1/tool-calls") {
