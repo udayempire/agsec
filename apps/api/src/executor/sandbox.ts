@@ -71,7 +71,7 @@ function rejectUnsafeInput(inputPath: string): void {
   }
 
   if (path.isAbsolute(inputPath) || path.win32.isAbsolute(inputPath)) {
-    throw new Error("Absolute sandbox paths are not allowed");
+    throw new Error("Absolute paths are not allowed.");
   }
 }
 
