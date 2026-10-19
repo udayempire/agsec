@@ -11,11 +11,14 @@
     "check-types": "tsc --noEmit"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "@types/express": "^5.0.6"
   },
   "dependencies": {
-    "@repo/shared": "*",
+    "@repo/database": "*",
     "@repo/policy-engine": "*",
+    "@repo/shared": "*",
+    "express": "^5.3.0",
     "zod": "^4.6.7"
   }
 }

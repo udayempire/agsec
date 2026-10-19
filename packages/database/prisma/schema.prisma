@@ -1,0 +1,97 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum ToolName {
+  read_file
+  write_file
+  list_dir
+  http_send
+  run_command
+}
+
+enum Decision {
+  ALLOW
+  BLOCK
+  REQUIRE_APPROVAL
+}
+
+enum Severity {
+  info
+  low
+  medium
+  high
+  critical
+}
+
+model AgentSession {
+  id        String       @id @default(cuid())
+  sessionId String       @unique
+  startedAt DateTime     @default(now())
+  endedAt   DateTime?
+  events    AuditEvent[]
+
+  @@index([startedAt])
+}
+
+model AuditEvent {
+  eventId        String       @id
+  sessionId      String
+  seq            Int
+  idempotencyKey String
+  tool           ToolName
+  decision       Decision
+  severity       Severity
+  matchedRules   Json         @default("[]")
+  reason         String
+  executed       Boolean      @default(false)
+  resourcePath   String?
+  resourceClass  String?
+  payloadBytes   Int?
+  timestamp      DateTime     @default(now())
+  session        AgentSession @relation(fields: [sessionId], references: [sessionId], onDelete: Restrict)
+
+  @@unique([sessionId, seq])
+  @@unique([sessionId, idempotencyKey])
+  @@index([timestamp])
+  @@index([decision, timestamp])
+  @@index([sessionId, timestamp])
+}
+
+model PolicySet {
+  id          String       @id @default(cuid())
+  name        String
+  description String?
+  version     Int          @default(1)
+  enabled     Boolean      @default(true)
+  ownerId     String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  rules       PolicyRule[]
+
+  @@index([ownerId, enabled])
+  @@index([updatedAt])
+}
+
+model PolicyRule {
+  id          String    @id @default(cuid())
+  policySetId String
+  ruleId      String
+  enabled     Boolean   @default(true)
+  tool        String
+  effect      Decision
+  severity    Severity
+  match       Json
+  description String
+  position    Int       @default(0)
+  policySet   PolicySet @relation(fields: [policySetId], references: [id], onDelete: Cascade)
+
+  @@unique([policySetId, ruleId])
+  @@index([policySetId, position])
+  @@index([tool, enabled])
+}

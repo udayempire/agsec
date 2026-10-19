@@ -8,7 +8,7 @@ import {
 import { resolveSandboxPath } from "../executor/sandbox";
 import { runAuthorizedAction } from "../executor";
 import { auditStore } from "../audit/memory-store";
-import type { AuditEvent } from "../audit/store";
+import type { AuditEvent, AuditStore } from "../audit/store";
 import { authorizeAction } from "./authorize";
 import type { ToolCallRequest } from "@repo/shared";
 import { sessionState } from "./session-state";
@@ -19,7 +19,10 @@ export type GatewayResult = {
   result?: unknown;
 };
 
-export async function handleToolCall(input: unknown): Promise<GatewayResult> {
+export async function handleToolCall(
+  input: unknown,
+  store: AuditStore = auditStore,
+): Promise<GatewayResult> {
   let request: ToolCallRequest | undefined;
   let resourcePath: string | undefined;
   let resourceClass: string | undefined;
@@ -48,7 +51,7 @@ export async function handleToolCall(input: unknown): Promise<GatewayResult> {
       ...(payloadBytes !== undefined ? { payloadBytes } : {}),
     };
 
-    await auditStore.append(event);
+    await store.append(event);
   };
 
   try {

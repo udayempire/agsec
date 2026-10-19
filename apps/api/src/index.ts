@@ -1,145 +1,58 @@
-import { handleToolCall } from "./gateway/handle";
-import { auditStore } from "./audit/memory-store";
+import express from "express";
+import { indexRouter } from "./routes/index.routes";
 
-const PORT = Number(Bun.env.PORT ?? 3001);
+const PORT = process.env.PORT;
+const app = express();
 
-function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
-  return Response.json(body, {
-    ...init,
-    headers: {
-      "access-control-allow-origin": "*",
-      "access-control-allow-methods": "GET,POST,OPTIONS",
-      "access-control-allow-headers": "content-type,authorization,x-api-key",
-      ...init.headers,
-    },
+app.use((req, res, next) => {
+  res.set({
+    "access-control-allow-origin": "*",
+    "access-control-allow-methods": "GET,POST,OPTIONS",
+    "access-control-allow-headers": "content-type,authorization,x-api-key",
   });
-}
 
-async function readJson(req: Request): Promise<unknown> {
-  const contentType = req.headers.get("content-type") ?? "";
-
-  if (!contentType.includes("application/json")) {
-    throw new Error("Content-Type must be application/json");
+  if (req.method === "OPTIONS") {
+    res.sendStatus(204);
+    return;
   }
 
-  return await req.json();
-}
-
-Bun.serve({
-  port: PORT,
-  maxRequestBodySize: 128 * 1024,
-  async fetch(req) {
-    const url = new URL(req.url);
-
-    if (req.method === "OPTIONS") {
-      return jsonResponse({}, { status: 204 });
-    }
-
-    if (req.method === "GET" && url.pathname === "/health") {
-      return jsonResponse({ ok: true, service: "agsec-api" });
-    }
-
-    if (req.method === "GET" && url.pathname === "/admin/events") {
-      const requestedLimit = Number(url.searchParams.get("limit") ?? 100);
-
-      if (
-        !Number.isInteger(requestedLimit) ||
-        requestedLimit < 1 ||
-        requestedLimit > 1_000
-      ) {
-        return jsonResponse(
-          { error: "limit must be an integer between 1 and 1000" },
-          { status: 400 },
-        );
-      }
-
-      return jsonResponse({ events: await auditStore.listRecent(requestedLimit) });
-    }
-
-    if (req.method === "GET" && url.pathname === "/admin/stats") {
-      return jsonResponse(await auditStore.getStats());
-    }
-
-    if (req.method === "GET" && url.pathname === "/admin/stream") {
-      const encoder = new TextEncoder();
-      let unsubscribe = () => {};
-      let heartbeat: ReturnType<typeof setInterval> | undefined;
-      let closed = false;
-
-      const stream = new ReadableStream<Uint8Array>({
-        start(controller) {
-          const send = (event: string, data: unknown) => {
-            if (closed) return;
-
-            try {
-              controller.enqueue(
-                encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
-              );
-            } catch {
-              close();
-            }
-          };
-
-          const close = () => {
-            if (closed) return;
-            closed = true;
-            unsubscribe();
-            if (heartbeat) clearInterval(heartbeat);
-            try {
-              controller.close();
-            } catch {
-              // The client may have already closed the stream.
-            }
-          };
-
-          unsubscribe = auditStore.subscribe((event) => send("audit", event));
-          heartbeat = setInterval(() => {
-            if (!closed) controller.enqueue(encoder.encode(": heartbeat\n\n"));
-          }, 15_000);
-          send("ready", { service: "agsec-api" });
-          req.signal.addEventListener("abort", close, { once: true });
-        },
-        cancel() {
-          closed = true;
-          unsubscribe();
-          if (heartbeat) clearInterval(heartbeat);
-        },
-      });
-
-      return new Response(stream, {
-        headers: {
-          "access-control-allow-origin": "*",
-          "cache-control": "no-cache, no-transform",
-          connection: "keep-alive",
-          "content-type": "text/event-stream",
-        },
-      });
-    }
-
-    if (req.method === "POST" && url.pathname === "/v1/tool-calls") {
-      try {
-        const body = await readJson(req);
-        const result = await handleToolCall(body);
-        const status = result.verdict.decision === "ALLOW" ? 200 : 403;
-        return jsonResponse(result, { status });
-      } catch (error) {
-        return jsonResponse(
-          {
-            verdict: {
-              decision: "BLOCK",
-              severity: "high",
-              matchedRules: ["SYS-FAIL-CLOSED"],
-              reason: error instanceof Error ? error.message : "Request failed closed",
-            },
-            executed: false,
-          },
-          { status: 400 },
-        );
-      }
-    }
-
-    return jsonResponse({ error: "Not found" }, { status: 404 });
-  },
+  next();
 });
 
-console.log(`AgSec API listening on http://localhost:${PORT}`);
+app.use(express.json({ limit: 128 * 1024 }));
+
+app.get("/health", (_req, res) => {
+  res.json({ ok: true, service: "agsec-api" });
+});
+
+app.use(indexRouter);
+
+app.use((_req, res) => {
+  res.status(404).json({ error: "Not found" });
+});
+
+app.use(
+  (
+    error: unknown,
+    _req: express.Request,
+    res: express.Response,
+    _next: express.NextFunction,
+  ) => {
+    const status =
+      typeof error === "object" &&
+        error !== null &&
+        "status" in error &&
+        typeof error.status === "number"
+        ? error.status
+        : 500;
+
+    res.status(status).json({
+      error:
+        status === 400 ? "Invalid JSON request body" : "Internal server error",
+    });
+  },
+);
+
+app.listen(PORT, () => {
+  console.log(`AgSec API listening on http://localhost:${PORT}`);
+});
